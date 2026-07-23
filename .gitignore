@@ -1,0 +1,66 @@
+# ------------------------------
+# Python & Virtual Environment
+# ------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+ENV/
+
+# ------------------------------
+# FastF1 Cache (HUGE - DO NOT UPLOAD!)
+# ------------------------------
+cache/
+
+# ------------------------------
+# Trained Models (User must generate their own)
+# ------------------------------
+*.pkl
+*.joblib
+models/
+
+# ------------------------------
+# IDE & Editor files
+# ------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ------------------------------
+# Jupyter Notebooks (optional - but keep if you want to share .ipynb)
+# ------------------------------
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ------------------------------
+# OS garbage files
+# ------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# ------------------------------
+# Streamlit local config
+# ------------------------------
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# ------------------------------
+# Testing & Coverage
+# ------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ------------------------------
+# Distribution / Packaging
+# ------------------------------
+*.egg-info/
+dist/
+build/
