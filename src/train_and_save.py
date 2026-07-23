@@ -7,6 +7,7 @@ train_and_save.py
 4. Saves model and feature names to disk.
 """
 
+import os
 import fastf1
 import pandas as pd
 import numpy as np
@@ -17,6 +18,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Cache FastF1 data (this folder only stores raw API responses)
+# Ensure cache directory exists
+if not os.path.exists('cache'):
+    os.makedirs('cache')
 fastf1.Cache.enable_cache('cache')
 
 # ------------------------------
