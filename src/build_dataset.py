@@ -13,6 +13,7 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import cross_val_score, LeaveOneGroupOut
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error
 import warnings
 warnings.filterwarnings('ignore')
@@ -27,17 +28,17 @@ fastf1.Cache.enable_cache('cache')
 # 1. Get the 2023 race schedule
 # ------------------------------
 schedule = fastf1.get_event_schedule(2023)
-# We only want actual races (event type 'R' and not cancelled)
-race_events = schedule[schedule['EventFormat'] == 'conventional']  # or 'sprint' weekends, but we take race sessions
+race_events = schedule[schedule['EventFormat'] == 'conventional']
 
 # ------------------------------
 # 2. Loop over races and collect data
 # ------------------------------
 all_results = []
-driver_history = {}  # track driver's finishing positions race by race
+driver_history = {}
 
 for _, event in race_events.iterrows():
     race_name = event['EventName']
+    location = event['Location']          # <--- FIX: Get the city name
     round_number = event['RoundNumber']
     print(f"Processing Round {round_number}: {race_name}")
 
@@ -52,47 +53,39 @@ for _, event in race_events.iterrows():
     results.dropna(subset=['Position'], inplace=True)
     results['Round'] = round_number
     results['Circuit'] = race_name
+    results['Location'] = location          # <--- FIX: Store the city name
 
     # ----- Feature: Driver rolling form (avg finish last 3 races) -----
     for driver in results['Abbreviation']:
         if driver not in driver_history:
             driver_history[driver] = []
-        # Calculate form BEFORE this race (use history of last 3 finishes)
         history = driver_history[driver][-3:]
-        if len(history) > 0:
-            results.loc[results['Abbreviation'] == driver, 'DriverForm'] = np.mean(history)
-        else:
-            results.loc[results['Abbreviation'] == driver, 'DriverForm'] = np.nan
+        results.loc[results['Abbreviation'] == driver, 'DriverForm'] = np.mean(history) if history else np.nan
 
     # ----- Feature: Constructor pace (average grid position of both drivers) -----
     team_grid = results.groupby('TeamName')['GridPosition'].mean().reset_index()
     team_grid.columns = ['TeamName', 'ConstructorAvgGrid']
     results = results.merge(team_grid, on='TeamName', how='left')
 
-    # ----- Feature: Is it a street circuit? (simple manual list) -----
-    street_circuits = ['Monaco', 'Singapore', 'Baku', 'Jeddah', 'Melbourne', 'Miami', 'Las Vegas']
-    results['IsStreet'] = results['Circuit'].apply(lambda x: 1 if x in street_circuits else 0)
+    # ----- Feature: Is it a street circuit? (FIXED: compare against Location) -----
+    street_circuit_locations = ['Monaco', 'Singapore', 'Baku', 'Jeddah', 'Melbourne', 'Miami', 'Las Vegas']
+    results['IsStreet'] = results['Location'].apply(lambda x: 1 if x in street_circuit_locations else 0)
 
-    # Append to master list
     all_results.append(results)
 
-    # Update driver history AFTER the race (store this race's finish position)
+    # Update driver history AFTER the race
     for _, row in results.iterrows():
-        driver = row['Abbreviation']
-        pos = row['Position']
-        driver_history[driver].append(pos)
+        driver_history.setdefault(row['Abbreviation'], []).append(row['Position'])
 
-# Combine all races into one DataFrame
+# Combine all races
 df = pd.concat(all_results, ignore_index=True)
 print(f"\nTotal race entries collected: {df.shape[0]}")
 
 # ------------------------------
 # 3. Prepare features and target
 # ------------------------------
-# Drop rows where we don't have form (first races of season for a driver)
 df.dropna(subset=['DriverForm'], inplace=True)
 
-# Feature columns
 features = ['GridPosition', 'DriverForm', 'ConstructorAvgGrid', 'IsStreet']
 X = df[features]
 y = df['Position']
@@ -102,25 +95,22 @@ y = df['Position']
 # ------------------------------
 model = RandomForestRegressor(n_estimators=200, random_state=42)
 
-# Use LeaveOneGroupOut cross-validation (leave out one race at a time)
-# to avoid data leakage between races
 logo = LeaveOneGroupOut()
-groups = df['Round']  # each round is a group
+groups = df['Round']
 
 cv_scores = cross_val_score(model, X, y, cv=logo, groups=groups, scoring='neg_mean_absolute_error')
 mae_rf = -cv_scores.mean()
 print(f"\nRandom Forest MAE: {mae_rf:.2f} positions (cross-validated)")
 
-# Fit on all data to inspect feature importances
 model.fit(X, y)
 importances = model.feature_importances_
+print("\nFeature Importances:")
 for feat, imp in zip(features, importances):
     print(f"  {feat}: {imp:.3f}")
 
 # ------------------------------
 # 5. Quick comparison to baseline (Grid only)
 # ------------------------------
-from sklearn.linear_model import LinearRegression
 baseline_model = LinearRegression()
 baseline_scores = cross_val_score(baseline_model, df[['GridPosition']], y, cv=logo, groups=groups, scoring='neg_mean_absolute_error')
 mae_baseline = -baseline_scores.mean()
