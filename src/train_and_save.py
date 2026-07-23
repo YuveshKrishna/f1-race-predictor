@@ -1,106 +1,70 @@
 """
 train_and_save.py
 -----------------
-1. Loads the whole 2023 F1 season via FastF1.
-2. Creates features (GridPosition, DriverForm, ConstructorAvgGrid, IsStreet).
-3. Trains a Random Forest model.
-4. Saves model and feature names to disk.
+Trains the Random Forest model using the shared feature pipeline (f1_features.py).
+Saves the model and feature names for the Streamlit dashboard.
 """
-
 import os
-import fastf1
-import pandas as pd
-import numpy as np
+import sys
+import joblib
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import cross_val_score, LeaveOneGroupOut
-import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
-# Cache FastF1 data (this folder only stores raw API responses)
-# Ensure cache directory exists
-if not os.path.exists('cache'):
-    os.makedirs('cache')
-fastf1.Cache.enable_cache('cache')
+# ---------- Fix Paths (so we can import f1_features from the parent folder) ----------
+# Get the root directory (parent of the 'src' folder)
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Add root to Python path so we can import f1_features
+sys.path.append(ROOT_DIR)
 
-# ------------------------------
-# 1. Get 2023 schedule and loop races
-# ------------------------------
-schedule = fastf1.get_event_schedule(2023)
-race_events = schedule[schedule['EventFormat'] == 'conventional']
+# ---------- Import the shared feature pipeline ----------
+from f1_features import build_season_dataset, FEATURE_NAMES
 
-all_results = []
-driver_history = {}
+# ---------- Build the dataset ----------
+print("🔄 Building dataset from 2023 season...")
+df, feature_names = build_season_dataset(2023, include_sprints=True)
 
-for _, event in race_events.iterrows():
-    race_name = event['EventName']
-    round_number = event['RoundNumber']
-    print(f"Processing {race_name} (Round {round_number})")
+print(f"\n📊 Dataset ready: {df.shape[0]} entries")
+print(f"📋 Features: {feature_names}")
 
-    try:
-        session = fastf1.get_session(2023, race_name, 'R')
-        session.load()
-    except Exception as e:
-        print(f"  Skipping: {e}")
-        continue
-
-    results = session.results[['Abbreviation', 'GridPosition', 'Position', 'TeamName']].copy()
-    results.dropna(subset=['Position'], inplace=True)
-    results['Round'] = round_number
-    results['Circuit'] = race_name
-
-    # Driver form: average finish position in last 3 races
-    for driver in results['Abbreviation']:
-        if driver not in driver_history:
-            driver_history[driver] = []
-        history = driver_history[driver][-3:]
-        results.loc[results['Abbreviation'] == driver, 'DriverForm'] = np.mean(history) if history else np.nan
-
-    # Constructor average grid position
-    team_grid = results.groupby('TeamName')['GridPosition'].mean().reset_index()
-    team_grid.columns = ['TeamName', 'ConstructorAvgGrid']
-    results = results.merge(team_grid, on='TeamName', how='left')
-
-    # Street circuit indicator
-    street_circuits = ['Monaco', 'Singapore', 'Baku', 'Jeddah', 'Melbourne', 'Miami', 'Las Vegas']
-    results['IsStreet'] = results['Circuit'].apply(lambda x: 1 if x in street_circuits else 0)
-
-    all_results.append(results)
-
-    # Update history after race
-    for _, row in results.iterrows():
-        driver_history[row['Abbreviation']].append(row['Position'])
-
-# Combine all races
-df = pd.concat(all_results, ignore_index=True)
-df.dropna(subset=['DriverForm'], inplace=True)
-
-print(f"\nDataset ready: {df.shape[0]} entries")
-
-# ------------------------------
-# 2. Define features and target
-# ------------------------------
-feature_names = ['GridPosition', 'DriverForm', 'ConstructorAvgGrid', 'IsStreet']
+# ---------- Define features and target ----------
 X = df[feature_names]
 y = df['Position']
+groups = df['Round']
 
-# ------------------------------
-# 3. Train final model on full dataset
-# ------------------------------
+# ---------- Train final model on full dataset ----------
+print("\n🧠 Training Random Forest model...")
 model = RandomForestRegressor(n_estimators=200, random_state=42)
 model.fit(X, y)
 
-# Quick evaluation (leave-one-race-out CV)
+# ---------- Evaluate (Leave-One-Race-Out CV) ----------
+print("📈 Evaluating with Leave-One-Race-Out cross-validation...")
 logo = LeaveOneGroupOut()
-cv_scores = cross_val_score(model, X, y, cv=logo, groups=df['Round'], scoring='neg_mean_absolute_error')
-print(f"Cross‑validated MAE: {-cv_scores.mean():.2f} positions")
+cv_scores = cross_val_score(
+    model, X, y, 
+    cv=logo, 
+    groups=groups, 
+    scoring='neg_mean_absolute_error'
+)
+mae = -cv_scores.mean()
+print(f"✅ Cross-validated MAE: {mae:.2f} positions")
 
-# ------------------------------
-# 4. Save model and feature names
-# ------------------------------
-joblib.dump(model, 'f1_model.pkl')
-joblib.dump(feature_names, 'feature_names.pkl')
+# ---------- Feature Importances ----------
+importances = model.feature_importances_
+print("\n📊 Feature Importances:")
+for feat, imp in zip(feature_names, importances):
+    print(f"  {feat}: {imp:.3f}")
 
-print("\nModel saved as 'f1_model.pkl'")
-print("Feature names saved as 'feature_names.pkl'")
-print("You can now run the Streamlit dashboard!")
+# ---------- Save model and feature names ----------
+# Save in the ROOT_DIR so the dashboard (which looks in ../) can find them
+model_path = os.path.join(ROOT_DIR, 'f1_model.pkl')
+features_path = os.path.join(ROOT_DIR, 'feature_names.pkl')
+
+joblib.dump(model, model_path)
+joblib.dump(feature_names, features_path)
+
+print(f"\n✅ Model saved to: {model_path}")
+print(f"✅ Feature names saved to: {features_path}")
+print("\n🚀 You can now run the Streamlit dashboard:")
+print("   streamlit run dashboard/app.py")
