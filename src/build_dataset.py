@@ -7,6 +7,7 @@ F1 Strategy Intelligence – Feature Engineering & Improved Model
 4. Compares performance to the simple baseline.
 """
 
+import os
 import fastf1
 import pandas as pd
 import numpy as np
@@ -17,6 +18,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Enable FastF1 cache
+# Ensure cache directory exists
+if not os.path.exists('cache'):
+    os.makedirs('cache')
 fastf1.Cache.enable_cache('cache')
 
 # ------------------------------
